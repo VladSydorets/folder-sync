@@ -1,4 +1,3 @@
-import sys
 import os
 import logging
 import time
@@ -6,6 +5,7 @@ import shutil
 import hashlib
 import argparse
 from pathlib import Path
+from typing import Tuple
 
 """
 Parameters:
@@ -48,12 +48,12 @@ class FileSync:
                 f"Source path '{self.source_path}' does not exist.")
 
         if not self.replica_path.exists():
-            self.logger.info(
+            self.logger.debug(
                 f"Replica path '{self.replica_path}' does not exist. Creating...")
             os.makedirs(self.replica_path)
 
         if not self.log_path.exists():
-            self.logger.info(
+            self.logger.debug(
                 f"Log path '{self.log_path}' does not exist. Creating...")
             open(self.log_path, 'w').close()
 
@@ -69,7 +69,7 @@ class FileSync:
         except Exception as e:
             self.logger.exception(
                 f"Error calculating hash for {file_path}: {e}")
-            return None
+            return ""
         return hash_md5.hexdigest()
 
     def are_files_different(self, source_file: Path, replica_file: Path) -> bool:
@@ -101,7 +101,7 @@ class FileSync:
             replica_file.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source_file, tmp)
             os.replace(tmp, replica_file)
-            self.logger.info(f"Copied '{source_file}' to '{replica_file}'")
+            self.logger.debug(f"Copied '{source_file}' to '{replica_file}'")
             return True
         except Exception as e:
             self.logger.exception(
@@ -114,10 +114,10 @@ class FileSync:
         """
         try:
             if path.is_file():
-                self.logger.info(f"Removed '{path}'")
+                self.logger.debug(f"Removed '{path}'")
                 path.unlink()
-            else:
-                self.logger.info(f"Removed directory '{path}'")
+            if path.is_dir():
+                self.logger.debug(f"Removed directory '{path}'")
                 shutil.rmtree(path)
         except PermissionError as e:
             self.logger.exception(f"Permission error removing {path}: {e}")
@@ -156,7 +156,7 @@ class FileSync:
                     f"Waiting for {self.sync_interval} seconds until next synchronization...")
                 time.sleep(self.sync_interval)
 
-    def sync_source_to_replica(self, source_root: Path, replica_root: Path) -> tuple[int, int, int]:
+    def sync_source_to_replica(self, source_root: Path, replica_root: Path) -> Tuple[int, int, int]:
         """
         Synchronize files from the source directory to the replica directory
         """
@@ -184,12 +184,12 @@ class FileSync:
 
                 if not replica_dir.exists():
                     replica_dir.mkdir(parents=True, exist_ok=True)
-                    self.logger.info(f"Created directory '{replica_dir}'")
+                    self.logger.debug(f"Created directory '{replica_dir}'")
                     dirs_created += 1
 
         return files_copied, dirs_created, errors
 
-    def clean_replica(self, source_root: Path, replica_root: Path) -> tuple[int, int]:
+    def clean_replica(self, source_root: Path, replica_root: Path) -> Tuple[int, int]:
         """
         Remove files/directories in the replica folder that no longer exist in the source
         """
@@ -217,7 +217,7 @@ class FileSync:
         return files_removed, dirs_removed
 
     def log_sync_info(self, files_copied: int, files_removed: int, dirs_created: int, dirs_removed: int, errors: int, duration: float) -> None:
-        self.logger.info(
+        self.logger.debug(
             f"Files copied: {files_copied}, Files removed: {files_removed}, Directories created: {dirs_created}, Directories removed: {dirs_removed}, Errors: {errors}")
         self.logger.info(f"Synchronization completed in {duration} seconds")
 
@@ -237,24 +237,14 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    if args is None or len(sys.argv) != 6:
-        parser.print_help()
-        sys.exit(1)
-
-    source_path = args.source_path
-    replica_path = args.replica_path
-    sync_interval = args.sync_interval
-    sync_amount = args.sync_amount
-    log_path = args.log_path
-
     try:
-        syncer = FileSync(source_path, replica_path,
-                          sync_interval, sync_amount, log_path)
+        syncer = FileSync(args.source_path, args.replica_path,
+                          args.sync_interval, args.sync_amount, args.log_path)
         syncer.sync()
 
     except Exception:
         logging.exception("Unhandled error during setup or sync")
-        sys.exit(1)
+        return
 
 
 if __name__ == "__main__":
