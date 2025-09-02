@@ -18,17 +18,37 @@ Parameters:
 
 
 class FileSync:
-    def __init__(self, source: Path, replica: Path, interval: int, amount: int, log_path: Path) -> None:
+    def __init__(self, source: Path, replica: Path, interval: int, amount: int, log_path: Path, dry_run: bool) -> None:
         self.source_path = Path(source)
         self.replica_path = Path(replica)
         self.sync_interval = int(interval)
         self.sync_amount = int(amount)
         self.log_path = Path(log_path)
+        self.dry_run = dry_run
 
         self.validate_paths()
 
         self.logger = None
         self.init_logging()
+
+    @staticmethod
+    def add_arguments(parser):
+        """
+        Add command line arguments necessary for file synchronization
+        """
+        parser.add_argument("source_path", help="Path to the source directory")
+        parser.add_argument(
+            "replica_path", help="Path to the replica directory")
+        parser.add_argument(
+            "sync_interval", help="Synchronization interval", type=int)
+        parser.add_argument(
+            "sync_amount", help="Amount of data to synchronize", type=int)
+        parser.add_argument("log_path", help="Path to the log file")
+
+        parser.add_argument(
+            "--dry-run", help="Perform a trial run without making any changes", action="store_true")
+
+        return parser.parse_args()
 
     def init_logging(self) -> None:
         """
@@ -48,14 +68,16 @@ class FileSync:
                 f"Source path '{self.source_path}' does not exist.")
 
         if not self.replica_path.exists():
-            self.logger.debug(
+            self.logger.info(
                 f"Replica path '{self.replica_path}' does not exist. Creating...")
-            os.makedirs(self.replica_path)
+            if not self.dry_run:
+                os.makedirs(self.replica_path)
 
         if not self.log_path.exists():
-            self.logger.debug(
+            self.logger.info(
                 f"Log path '{self.log_path}' does not exist. Creating...")
-            open(self.log_path, 'w').close()
+            if not self.dry_run:
+                open(self.log_path, 'w').close()
 
     def calculate_file_hash(self, file_path: Path) -> str:
         """
@@ -98,10 +120,11 @@ class FileSync:
         """
         try:
             tmp = replica_file.with_suffix('.tmp')
-            replica_file.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source_file, tmp)
-            os.replace(tmp, replica_file)
-            self.logger.debug(f"Copied '{source_file}' to '{replica_file}'")
+            if not self.dry_run:
+                replica_file.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_file, tmp)
+                os.replace(tmp, replica_file)
+            self.logger.info(f"Copied '{source_file}' to '{replica_file}'")
             return True
         except Exception as e:
             self.logger.exception(
@@ -114,11 +137,13 @@ class FileSync:
         """
         try:
             if path.is_file():
-                self.logger.debug(f"Removed '{path}'")
-                path.unlink()
+                self.logger.info(f"Removed '{path}'")
+                if not self.dry_run:
+                    path.unlink()
             if path.is_dir():
-                self.logger.debug(f"Removed directory '{path}'")
-                shutil.rmtree(path)
+                self.logger.info(f"Removed directory '{path}'")
+                if not self.dry_run:
+                    shutil.rmtree(path)
         except PermissionError as e:
             self.logger.exception(f"Permission error removing {path}: {e}")
         except Exception as e:
@@ -166,7 +191,8 @@ class FileSync:
             root_path = Path(root)
             replica_dir_path = replica_root / \
                 root_path.relative_to(source_root)
-            os.makedirs(replica_dir_path, exist_ok=True)
+            if not self.dry_run:
+                os.makedirs(replica_dir_path, exist_ok=True)
 
             for name in files:
                 source_file = root_path / name
@@ -183,8 +209,9 @@ class FileSync:
                 replica_dir = replica_dir_path / name
 
                 if not replica_dir.exists():
-                    replica_dir.mkdir(parents=True, exist_ok=True)
-                    self.logger.debug(f"Created directory '{replica_dir}'")
+                    if not self.dry_run:
+                        replica_dir.mkdir(parents=True, exist_ok=True)
+                    self.logger.info(f"Created directory '{replica_dir}'")
                     dirs_created += 1
 
         return files_copied, dirs_created, errors
@@ -203,7 +230,8 @@ class FileSync:
                 source_path = source_dir_path / name
 
                 if not source_path.exists():
-                    self.remove_file_or_directory(replica_path)
+                    if not self.dry_run:
+                        self.remove_file_or_directory(replica_path)
                     files_removed += 1
 
             for name in dirs:
@@ -217,7 +245,7 @@ class FileSync:
         return files_removed, dirs_removed
 
     def log_sync_info(self, files_copied: int, files_removed: int, dirs_created: int, dirs_removed: int, errors: int, duration: float) -> None:
-        self.logger.debug(
+        self.logger.info(
             f"Files copied: {files_copied}, Files removed: {files_removed}, Directories created: {dirs_created}, Directories removed: {dirs_removed}, Errors: {errors}")
         self.logger.info(f"Synchronization completed in {duration} seconds")
 
@@ -227,19 +255,14 @@ def main() -> None:
     Main function to start the synchronization process
     """
     parser = argparse.ArgumentParser(description="File Synchronization Script")
-    parser.add_argument("source_path", help="Path to the source directory")
-    parser.add_argument("replica_path", help="Path to the replica directory")
-    parser.add_argument(
-        "sync_interval", help="Synchronization interval", type=int)
-    parser.add_argument(
-        "sync_amount", help="Amount of data to synchronize", type=int)
-    parser.add_argument("log_path", help="Path to the log file")
+    args = FileSync.add_arguments(parser)
 
-    args = parser.parse_args()
+    if args.dry_run:
+        logging.info("Dry run mode enabled")
 
     try:
         syncer = FileSync(args.source_path, args.replica_path,
-                          args.sync_interval, args.sync_amount, args.log_path)
+                          args.sync_interval, args.sync_amount, args.log_path, dry_run=args.dry_run)
         syncer.sync()
 
     except Exception:
